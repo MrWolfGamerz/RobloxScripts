@@ -1,4 +1,4 @@
--- kryptex Dungeon Hub!
+-- kryptex Dungeon Hub
 -- Hub script using the provided remotes.
 
 local Players = game:GetService("Players")
@@ -391,20 +391,37 @@ local function startMandatoryAntiAfk()
 		return
 	end
 
-	antiAfkConnection = player.Idled:Connect(function()
-		pcall(function()
-			if VirtualUser then
-				VirtualUser:CaptureController()
-				VirtualUser:ClickButton2(Vector2.new())
-				return
-			end
+	local function pulse()
+		if VirtualUser then
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new(0, 0))
+			return
+		end
 
-			if VirtualInputManager then
-				VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-				task.wait(0.05)
-				VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-			end
+		if VirtualInputManager then
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+			task.wait(0.05)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+		end
+	end
+
+	local connected, connection = pcall(function()
+		return player.Idled:Connect(function()
+			pcall(pulse)
 		end)
+	end)
+
+	if connected then
+		antiAfkConnection = connection
+		return
+	end
+
+	antiAfkConnection = true
+	task.spawn(function()
+		while antiAfkConnection do
+			pcall(pulse)
+			task.wait(60)
+		end
 	end)
 end
 
