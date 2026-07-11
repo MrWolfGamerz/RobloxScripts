@@ -1,4 +1,4 @@
--- kryptex Dungeon Hub
+-- kryptex Dungeon Hub!
 -- Hub script using the provided remotes.
 
 local Players = game:GetService("Players")
