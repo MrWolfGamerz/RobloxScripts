@@ -94,6 +94,16 @@ local function loadProtectedScript(key)
 	end
 end
 
+local savedKey = readSavedKey()
+if savedKey ~= "" then
+	task.spawn(function()
+		task.wait(0.1)
+		loadProtectedScript(savedKey)
+	end)
+
+	return
+end
+
 local oldGui = playerGui:FindFirstChild("KryptexKeyGui")
 if oldGui then
 	oldGui:Destroy()
