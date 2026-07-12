@@ -1,4 +1,4 @@
-local LOADER_URL = "loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/a1f980ee0770fbf5a5c18a69f3c90f2b.lua"))()"
+local LOADER_URL = "https://api.luarmor.net/files/v4/loaders/a1f980ee0770fbf5a5c18a69f3c90f2b.lua"
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -60,9 +60,18 @@ local function loadProtectedScript(key)
 
 	saveKey(key)
 
-	getgenv().script_key = key
-	_G.script_key = key
-	script_key = key
+	pcall(function()
+		local env = getgenv and getgenv() or _G
+		env.script_key = key
+	end)
+
+	pcall(function()
+		_G.script_key = key
+	end)
+
+	pcall(function()
+		script_key = key
+	end)
 
 	local ok, source = pcall(function()
 		return game:HttpGet(LOADER_URL)
