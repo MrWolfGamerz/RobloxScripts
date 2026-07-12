@@ -182,6 +182,8 @@ local performance = {
 
 local cachedStartButton
 local cachedStartButtonAt = 0
+local cachedHubGui
+local cachedHubGuiAt = 0
 local lastPortalGuiScan = 0
 
 local ZURIEL_CLEAR_POSITION = Vector3.new(-59.861, -101.444, -1474.841)
@@ -274,6 +276,10 @@ local function getGuiParent()
 end
 
 local function findHubGui()
+	if cachedHubGui and cachedHubGui.Parent and os.clock() - cachedHubGuiAt <= 5 then
+		return cachedHubGui
+	end
+
 	local parents = {
 		getGuiParent(),
 		player:FindFirstChild("PlayerGui"),
@@ -286,6 +292,8 @@ local function findHubGui()
 					local name = string.lower(child.Name)
 
 					if name:find("kryptex") then
+						cachedHubGui = child
+						cachedHubGuiAt = os.clock()
 						return child
 					end
 
@@ -294,6 +302,8 @@ local function findHubGui()
 							local text = string.lower(tostring(descendant.Text))
 
 							if text:find("kryptexhub", 1, true) then
+								cachedHubGui = child
+								cachedHubGuiAt = os.clock()
 								return child
 							end
 						end
@@ -1643,11 +1653,11 @@ end
 
 local function startAutoTowerWatcher()
 	task.spawn(function()
-		while task.wait(1) do
-			connectTowerPortalEvents()
-			connectTowerWaveReset()
+		while task.wait(performance.TowerWatcherDelay) do
+			if settings.AutoTower then
+				connectTowerPortalEvents()
+				connectTowerWaveReset()
 
-			if settings.AutoTower or autoFarm then
 				local rewardPart = getTreasureRewardPart()
 
 				if settings.AutoTowerTreasureRewards
@@ -1661,6 +1671,9 @@ local function startAutoTowerWatcher()
 					scheduleTowerPortalPick(0.05)
 				end
 
+				retryTowerStartIfNeeded()
+			elseif autoFarm and isDungeonStartWaiting() then
+				connectTowerWaveReset()
 				retryTowerStartIfNeeded()
 			end
 		end
@@ -2118,6 +2131,10 @@ local function isFirstSanctuaryFinalEnemy(enemy)
 end
 
 local function getThunderingPeaksPriorityEnemy()
+	if not isCurrentDungeonMap("Thundering Peaks") then
+		return nil
+	end
+
 	local enemiesFolder = getEnemiesFolder()
 	if not enemiesFolder then
 		return nil
@@ -2346,9 +2363,12 @@ local function startZurielWatchLoop()
 
 	task.spawn(function()
 		while autoFarm do
-			updateZurielClearTeleport()
-			updateEphrathAndGrailFlow()
-			task.wait(0.25)
+			if isCurrentDungeonMap("The First Sanctuary") then
+				updateZurielClearTeleport()
+				updateEphrathAndGrailFlow()
+			end
+
+			task.wait(performance.BossWatchDelay)
 		end
 
 		zurielWatchLoopRunning = false
@@ -2387,12 +2407,27 @@ local function startOrbit()
 		orbitConnection:Disconnect()
 	end
 
+	local lastOrbitUpdate = 0
+	local lastTargetScan = 0
+
 	orbitConnection = RunService.Heartbeat:Connect(function()
 		if not autoFarm then
 			return
 		end
 
-		local enemy = getLockedEnemy()
+		local clock = os.clock()
+		if clock - lastOrbitUpdate < performance.OrbitStep then
+			return
+		end
+
+		lastOrbitUpdate = clock
+
+		local enemy = currentEnemy
+		if not enemy or not isEnemyAlive(enemy) or clock - lastTargetScan >= performance.TargetScanDelay then
+			enemy = getLockedEnemy()
+			lastTargetScan = clock
+		end
+
 		if enemy then
 			orbitEnemy(enemy)
 		end
@@ -2455,7 +2490,7 @@ local function startUtilityLoop()
 				lastSkillPoint = now
 			end
 
-			task.wait(0.25)
+			task.wait(performance.UtilityLoopDelay)
 		end
 
 		utilityLoopRunning = false
@@ -2568,7 +2603,7 @@ local function startSoloSafetyLoop()
 	soloSafetyLoopRunning = true
 
 	task.spawn(function()
-		while task.wait(0.5) do
+		while task.wait(1.5) do
 			if settings.SoloSafetyPause and (autoFarm or settings.AutoTower) and not isLobbyDummyArea() then
 				local otherPlayerNames = getOtherPlayerNames()
 
