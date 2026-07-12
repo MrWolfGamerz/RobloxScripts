@@ -34,7 +34,6 @@ local settings = {
 	SoloSafetyPause = false,
 	AutoStartOnExecute = false,
 	AutoCreateAndStartDungeon = true,
-	DungeonSpeedFarmer = false,
 	DungeonStartDelay = 2,
 	DungeonStartAttempts = 8,
 	DungeonStartRetryDelay = 0.75,
@@ -168,24 +167,6 @@ local hubIconGui
 local hubIconButton
 local hookedMinimizeButtons = {}
 
-local performance = {
-	HubMonitorDelay = 2,
-	PlayerInfoRefreshDelay = 6,
-	OrbitStep = 1 / 20,
-	TargetScanDelay = 0.35,
-	BossWatchDelay = 0.75,
-	UtilityLoopDelay = 0.75,
-	TowerWatcherDelay = 1.5,
-	GuiScanCooldown = 1.25,
-	PortalGuiScanCooldown = 1,
-}
-
-local cachedStartButton
-local cachedStartButtonAt = 0
-local cachedHubGui
-local cachedHubGuiAt = 0
-local lastPortalGuiScan = 0
-
 local ZURIEL_CLEAR_POSITION = Vector3.new(-59.861, -101.444, -1474.841)
 local EPHRATH_CLEAR_CFRAME = CFrame.new(-86.484, -40.969, -3942.660)
 local GRAIL_ARENA_CFRAME = CFrame.new(1302.258, 433.780, -4008.982)
@@ -241,8 +222,6 @@ end
 
 local getPlayerLevel
 local getBestUnlockedDungeon
-local getLowestDungeon
-local getAutoFarmDungeon
 local playerInfoParagraph
 
 local function notify(title, content)
@@ -276,10 +255,6 @@ local function getGuiParent()
 end
 
 local function findHubGui()
-	if cachedHubGui and cachedHubGui.Parent and os.clock() - cachedHubGuiAt <= 5 then
-		return cachedHubGui
-	end
-
 	local parents = {
 		getGuiParent(),
 		player:FindFirstChild("PlayerGui"),
@@ -292,8 +267,6 @@ local function findHubGui()
 					local name = string.lower(child.Name)
 
 					if name:find("kryptex") then
-						cachedHubGui = child
-						cachedHubGuiAt = os.clock()
 						return child
 					end
 
@@ -302,8 +275,6 @@ local function findHubGui()
 							local text = string.lower(tostring(descendant.Text))
 
 							if text:find("kryptexhub", 1, true) then
-								cachedHubGui = child
-								cachedHubGuiAt = os.clock()
 								return child
 							end
 						end
@@ -451,7 +422,7 @@ end
 
 local function startHubIconMonitor()
 	task.spawn(function()
-		while task.wait(performance.HubMonitorDelay) do
+		while task.wait(0.5) do
 			hookHubMinimizeButtons()
 
 			if hubIconButton then
@@ -1155,12 +1126,6 @@ local function collectTreasureReward()
 end
 
 local function scanPortalGui()
-	if os.clock() - lastPortalGuiScan <= performance.PortalGuiScanCooldown and next(towerPortalSlots) ~= nil then
-		return
-	end
-
-	lastPortalGuiScan = os.clock()
-
 	local playerGui = player:FindFirstChild("PlayerGui")
 	if not playerGui then
 		return
@@ -1456,14 +1421,6 @@ local function getClickableStartGui(guiObject)
 end
 
 local function findVisibleGameStartButton()
-	if cachedStartButton
-		and cachedStartButton.Parent
-		and os.clock() - cachedStartButtonAt <= performance.GuiScanCooldown
-		and isGuiEffectivelyVisible(cachedStartButton)
-	then
-		return cachedStartButton
-	end
-
 	local playerGui = player:FindFirstChild("PlayerGui")
 	if not playerGui then
 		return nil
@@ -1471,9 +1428,7 @@ local function findVisibleGameStartButton()
 
 	for _, descendant in ipairs(playerGui:GetDescendants()) do
 		if isLikelyGameStartGui(descendant) then
-			cachedStartButton = getClickableStartGui(descendant)
-			cachedStartButtonAt = os.clock()
-			return cachedStartButton
+			return getClickableStartGui(descendant)
 		end
 	end
 
@@ -1504,9 +1459,7 @@ local function findVisibleGameStartButton()
 		end
 	end
 
-	cachedStartButton = bestGui and getClickableStartGui(bestGui) or nil
-	cachedStartButtonAt = os.clock()
-	return cachedStartButton
+	return bestGui and getClickableStartGui(bestGui)
 end
 
 local function tapGuiObject(guiObject)
@@ -1653,11 +1606,11 @@ end
 
 local function startAutoTowerWatcher()
 	task.spawn(function()
-		while task.wait(performance.TowerWatcherDelay) do
-			if settings.AutoTower then
-				connectTowerPortalEvents()
-				connectTowerWaveReset()
+		while task.wait(1) do
+			connectTowerPortalEvents()
+			connectTowerWaveReset()
 
+			if settings.AutoTower or autoFarm then
 				local rewardPart = getTreasureRewardPart()
 
 				if settings.AutoTowerTreasureRewards
@@ -1672,9 +1625,6 @@ local function startAutoTowerWatcher()
 				end
 
 				retryTowerStartIfNeeded()
-			elseif autoFarm and isDungeonStartWaiting() then
-				connectTowerWaveReset()
-				retryTowerStartIfNeeded()
 			end
 		end
 	end)
@@ -1685,13 +1635,11 @@ local function getDungeonMapAttempts(mapName)
 end
 
 local function makeCreateLobbyPayload(dungeonPreset, mapName, level)
-	local useSpeedQuestMode = settings.DungeonSpeedFarmer
-
 	return {
 		Map = mapName,
-		Calamity = useSpeedQuestMode and false or settings.CalamityModifier,
-		Hardcore = useSpeedQuestMode and false or settings.Hardcore,
-		NoHit = useSpeedQuestMode and false or settings.NoHit,
+		Calamity = settings.CalamityModifier,
+		Hardcore = settings.Hardcore,
+		NoHit = settings.NoHit,
 		Difficulty = dungeonPreset.Difficulty or "Calamity",
 		LevelRequirement = dungeonPreset.LevelRequirement or level or 0,
 		Tier = dungeonPreset.Tier or 0,
@@ -1752,7 +1700,7 @@ local function createAndStartDungeon()
 		local canStartLobby = resolveRemote("StartLobby") ~= nil
 
 		if canCreateLobby and canStartLobby then
-			local dungeon, level = getAutoFarmDungeon()
+			local dungeon, level = getBestUnlockedDungeon()
 
 			if settings.AutoSellAfterRun then
 				notify("Auto Sell", "Checking inventory before next run.")
@@ -1760,8 +1708,7 @@ local function createAndStartDungeon()
 				task.wait(settings.AutoSellDelay)
 			end
 
-			local modeName = settings.DungeonSpeedFarmer and "Dungeon SpeedFarmer" or "Dungeon"
-			notify(modeName, "Creating " .. tostring(dungeon.Map) .. " " .. tostring(dungeon.Difficulty) .. " for level " .. tostring(level) .. ".")
+			notify("Dungeon", "Creating " .. tostring(dungeon.Map) .. " " .. tostring(dungeon.Difficulty) .. " for level " .. tostring(level) .. ".")
 			createLobby(dungeon)
 			task.wait(settings.DungeonStartDelay)
 			notify("Dungeon", "Starting lobby.")
@@ -1981,25 +1928,6 @@ getBestUnlockedDungeon = function()
 	return best, level
 end
 
-getLowestDungeon = function()
-	local lowest = staticDungeonPresets[1] or {
-		Map = "Raided Village",
-		Difficulty = "Normal",
-		LevelRequirement = 1,
-		Tier = 0,
-	}
-
-	return copyDungeonPreset(lowest), getPlayerLevel()
-end
-
-getAutoFarmDungeon = function()
-	if settings.DungeonSpeedFarmer then
-		return getLowestDungeon()
-	end
-
-	return getBestUnlockedDungeon()
-end
-
 local function getPlayerInfoContent()
 	local levelPath = "fallback scan"
 	local dungeon, level = getBestUnlockedDungeon()
@@ -2029,7 +1957,7 @@ end
 
 local function startPlayerInfoRefresh()
 	task.spawn(function()
-		while task.wait(performance.PlayerInfoRefreshDelay) do
+		while task.wait(2) do
 			updatePlayerInfoDisplay()
 		end
 	end)
@@ -2131,10 +2059,6 @@ local function isFirstSanctuaryFinalEnemy(enemy)
 end
 
 local function getThunderingPeaksPriorityEnemy()
-	if not isCurrentDungeonMap("Thundering Peaks") then
-		return nil
-	end
-
 	local enemiesFolder = getEnemiesFolder()
 	if not enemiesFolder then
 		return nil
@@ -2363,12 +2287,9 @@ local function startZurielWatchLoop()
 
 	task.spawn(function()
 		while autoFarm do
-			if isCurrentDungeonMap("The First Sanctuary") then
-				updateZurielClearTeleport()
-				updateEphrathAndGrailFlow()
-			end
-
-			task.wait(performance.BossWatchDelay)
+			updateZurielClearTeleport()
+			updateEphrathAndGrailFlow()
+			task.wait(0.25)
 		end
 
 		zurielWatchLoopRunning = false
@@ -2407,27 +2328,12 @@ local function startOrbit()
 		orbitConnection:Disconnect()
 	end
 
-	local lastOrbitUpdate = 0
-	local lastTargetScan = 0
-
 	orbitConnection = RunService.Heartbeat:Connect(function()
 		if not autoFarm then
 			return
 		end
 
-		local clock = os.clock()
-		if clock - lastOrbitUpdate < performance.OrbitStep then
-			return
-		end
-
-		lastOrbitUpdate = clock
-
-		local enemy = currentEnemy
-		if not enemy or not isEnemyAlive(enemy) or clock - lastTargetScan >= performance.TargetScanDelay then
-			enemy = getLockedEnemy()
-			lastTargetScan = clock
-		end
-
+		local enemy = getLockedEnemy()
 		if enemy then
 			orbitEnemy(enemy)
 		end
@@ -2490,7 +2396,7 @@ local function startUtilityLoop()
 				lastSkillPoint = now
 			end
 
-			task.wait(performance.UtilityLoopDelay)
+			task.wait(0.25)
 		end
 
 		utilityLoopRunning = false
@@ -2603,7 +2509,7 @@ local function startSoloSafetyLoop()
 	soloSafetyLoopRunning = true
 
 	task.spawn(function()
-		while task.wait(1.5) do
+		while task.wait(0.5) do
 			if settings.SoloSafetyPause and (autoFarm or settings.AutoTower) and not isLobbyDummyArea() then
 				local otherPlayerNames = getOtherPlayerNames()
 
@@ -2631,9 +2537,7 @@ local Window = HubUI:CreateWindow({
 
 local LobbyTab = Window:CreateTab("Lobby", 4483362458)
 local AutoFarmTab = Window:CreateTab("Auto Farm", 4483362458)
-local AutoQuestTab = Window:CreateTab("Auto Quests", 4483362458)
 local TowerTab = Window:CreateTab("Auto Tower", 4483362458)
-local UtilitiesTab = Window:CreateTab("Utilities", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 createHubIcon()
@@ -2697,42 +2601,6 @@ LobbyTab:CreateButton({
 	Name = "Start Dungeon Run",
 	Callback = function()
 		task.spawn(startDungeonBurst)
-	end,
-})
-
-AutoQuestTab:CreateSection("Dungeon Quests")
-
-AutoQuestTab:CreateParagraph({
-	Title = "Lowest Dungeon",
-	Content = "Dungeon SpeedFarmer uses the same orbit/combat logic as Auto Farm, but creates the lowest dungeon for faster quest completions.",
-})
-
-AutoQuestTab:CreateToggle({
-	Name = "Dungeon SpeedFarmer",
-	CurrentValue = settings.DungeonSpeedFarmer,
-	Flag = "DungeonSpeedFarmer",
-	Callback = function(value)
-		settings.DungeonSpeedFarmer = value
-
-		if value then
-			setAutoFarm(true)
-			notify("Auto Quests", "Dungeon SpeedFarmer started.")
-		else
-			setAutoFarm(false)
-			notify("Auto Quests", "Dungeon SpeedFarmer stopped.")
-		end
-	end,
-})
-
-AutoQuestTab:CreateButton({
-	Name = "Create Lowest Dungeon Lobby",
-	Callback = function()
-		local dungeon = getLowestDungeon()
-		local previousSpeedMode = settings.DungeonSpeedFarmer
-
-		settings.DungeonSpeedFarmer = true
-		createLobby(dungeon)
-		settings.DungeonSpeedFarmer = previousSpeedMode
 	end,
 })
 
@@ -2834,18 +2702,13 @@ for _, portal in ipairs(towerPortalOptions) do
 	})
 end
 
-AutoFarmTab:CreateSection("Main")
+AutoFarmTab:CreateSection("Enemy Orbit")
 
 AutoFarmTab:CreateToggle({
 	Name = "Auto Farm",
 	CurrentValue = false,
 	Flag = "ManualAutoFarm",
 	Callback = function(value)
-		if value then
-			settings.DungeonSpeedFarmer = false
-			setSavedToggle("DungeonSpeedFarmer", false)
-		end
-
 		setAutoFarm(value)
 	end,
 })
@@ -2859,7 +2722,7 @@ AutoFarmTab:CreateToggle({
 	end,
 })
 
-AutoFarmTab:CreateSection("Dungeon Modifiers")
+AutoFarmTab:CreateSection("Lobby Modifiers")
 
 AutoFarmTab:CreateToggle({
 	Name = "Hardcore",
@@ -2887,8 +2750,6 @@ AutoFarmTab:CreateToggle({
 		settings.CalamityModifier = value
 	end,
 })
-
-AutoFarmTab:CreateSection("Orbit Settings")
 
 AutoFarmTab:CreateSlider({
 	Name = "Spin Speed",
@@ -2938,9 +2799,9 @@ AutoFarmTab:CreateSlider({
 	end,
 })
 
-UtilitiesTab:CreateSection("Equipment")
+AutoFarmTab:CreateSection("Farm Extras")
 
-UtilitiesTab:CreateToggle({
+AutoFarmTab:CreateToggle({
 	Name = "Auto Equip Best",
 	CurrentValue = settings.AutoEquipBest,
 	Flag = "AutoEquipBest",
@@ -2953,7 +2814,7 @@ UtilitiesTab:CreateToggle({
 	end,
 })
 
-UtilitiesTab:CreateSlider({
+AutoFarmTab:CreateSlider({
 	Name = "Equip Best Delay",
 	Range = { 1, 30 },
 	Increment = 1,
@@ -2965,14 +2826,14 @@ UtilitiesTab:CreateSlider({
 	end,
 })
 
-UtilitiesTab:CreateButton({
+AutoFarmTab:CreateButton({
 	Name = "Equip Best Now",
 	Callback = function()
 		equipBest()
 	end,
 })
 
-UtilitiesTab:CreateToggle({
+AutoFarmTab:CreateToggle({
 	Name = "Auto Skill Points",
 	CurrentValue = settings.AutoSkillPoints,
 	Flag = "AutoSkillPoints",
@@ -2981,7 +2842,7 @@ UtilitiesTab:CreateToggle({
 	end,
 })
 
-UtilitiesTab:CreateDropdown({
+AutoFarmTab:CreateDropdown({
 	Name = "Skill Point Type",
 	Options = { "spell", "physical", "health" },
 	CurrentOption = { settings.SkillPointType },
@@ -2996,7 +2857,7 @@ UtilitiesTab:CreateDropdown({
 	end,
 })
 
-UtilitiesTab:CreateSlider({
+AutoFarmTab:CreateSlider({
 	Name = "Skill Points Per Use",
 	Range = { 1, 10 },
 	Increment = 1,
@@ -3008,7 +2869,7 @@ UtilitiesTab:CreateSlider({
 	end,
 })
 
-UtilitiesTab:CreateSlider({
+AutoFarmTab:CreateSlider({
 	Name = "Skill Point Delay",
 	Range = { 1, 30 },
 	Increment = 1,
@@ -3020,16 +2881,16 @@ UtilitiesTab:CreateSlider({
 	end,
 })
 
-UtilitiesTab:CreateButton({
+AutoFarmTab:CreateButton({
 	Name = "Add Skill Point Now",
 	Callback = function()
 		addSkillPoints(settings.SkillPointType, settings.SkillPointAmount)
 	end,
 })
 
-UtilitiesTab:CreateSection("Auto Sell")
+AutoFarmTab:CreateSection("Auto Sell")
 
-UtilitiesTab:CreateToggle({
+AutoFarmTab:CreateToggle({
 	Name = "Auto Sell After Run",
 	CurrentValue = settings.AutoSellAfterRun,
 	Flag = "AutoSellAfterRun",
@@ -3038,7 +2899,7 @@ UtilitiesTab:CreateToggle({
 	end,
 })
 
-UtilitiesTab:CreateToggle({
+AutoFarmTab:CreateToggle({
 	Name = "Auto Sell On Load",
 	CurrentValue = settings.AutoSellOnLoad,
 	Flag = "AutoSellOnLoad",
@@ -3047,7 +2908,7 @@ UtilitiesTab:CreateToggle({
 	end,
 })
 
-UtilitiesTab:CreateToggle({
+AutoFarmTab:CreateToggle({
 	Name = "Protect Equipped Items",
 	CurrentValue = settings.ProtectEquippedItems,
 	Flag = "ProtectEquippedItems",
@@ -3056,7 +2917,7 @@ UtilitiesTab:CreateToggle({
 	end,
 })
 
-UtilitiesTab:CreateSlider({
+AutoFarmTab:CreateSlider({
 	Name = "Auto Sell Delay",
 	Range = { 0, 5 },
 	Increment = 0.25,
@@ -3068,7 +2929,7 @@ UtilitiesTab:CreateSlider({
 	end,
 })
 
-UtilitiesTab:CreateSlider({
+AutoFarmTab:CreateSlider({
 	Name = "Inventory Scan Timeout",
 	Range = { 1, 10 },
 	Increment = 0.5,
@@ -3081,7 +2942,7 @@ UtilitiesTab:CreateSlider({
 })
 
 for _, rarity in ipairs(sellRarityOptions) do
-	UtilitiesTab:CreateToggle({
+	AutoFarmTab:CreateToggle({
 		Name = "Sell " .. rarity.Label,
 		CurrentValue = settings.SellRarities[rarity.Key],
 		Flag = "SellRarity_" .. rarity.Key,
@@ -3091,7 +2952,7 @@ for _, rarity in ipairs(sellRarityOptions) do
 	})
 end
 
-UtilitiesTab:CreateButton({
+AutoFarmTab:CreateButton({
 	Name = "Sell Selected Rarities Now",
 	Callback = function()
 		runAutoSell(false, true)
@@ -3211,7 +3072,6 @@ local function syncSavedSettings()
 	settings.SoloSafetyPause = getFlagValue("SoloSafetyPause", settings.SoloSafetyPause)
 	settings.AutoStartOnExecute = getFlagValue("AutoStartOnExecute", settings.AutoStartOnExecute)
 	settings.AutoCreateAndStartDungeon = getFlagValue("AutoCreateAndStartDungeon", settings.AutoCreateAndStartDungeon)
-	settings.DungeonSpeedFarmer = getFlagValue("DungeonSpeedFarmer", settings.DungeonSpeedFarmer)
 	settings.AutoCast = getFlagValue("AutoCastSkills", settings.AutoCast)
 	settings.AutoEquipBest = getFlagValue("AutoEquipBest", settings.AutoEquipBest)
 	settings.EquipBestDelay = getFlagValue("EquipBestDelay", settings.EquipBestDelay)
@@ -3264,7 +3124,7 @@ task.delay(1, function()
 		runAutoSell(false, true)
 	end
 
-	if settings.AutoStartOnExecute or settings.DungeonSpeedFarmer then
+	if settings.AutoStartOnExecute then
 		setAutoFarm(true)
 	end
 end)
