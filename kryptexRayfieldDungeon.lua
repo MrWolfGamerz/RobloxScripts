@@ -7,14 +7,9 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager
-local VirtualUser
 
 pcall(function()
 	VirtualInputManager = game:GetService("VirtualInputManager")
-end)
-
-pcall(function()
-	VirtualUser = game:GetService("VirtualUser")
 end)
 
 local player = Players.LocalPlayer
@@ -172,7 +167,6 @@ local lastSkillPoint = 0
 local hubIconGui
 local hubIconButton
 local hookedMinimizeButtons = {}
-local antiAfkConnection
 
 local ZURIEL_CLEAR_POSITION = Vector3.new(-59.861, -101.444, -1474.841)
 local EPHRATH_CLEAR_CFRAME = CFrame.new(-86.484, -40.969, -3942.660)
@@ -382,45 +376,6 @@ local function makeDraggable(guiObject)
 				startPosition.Y.Scale,
 				startPosition.Y.Offset + delta.Y
 			)
-		end
-	end)
-end
-
-local function startMandatoryAntiAfk()
-	if antiAfkConnection then
-		return
-	end
-
-	local function pulse()
-		if VirtualUser then
-			VirtualUser:CaptureController()
-			VirtualUser:ClickButton2(Vector2.new(0, 0))
-			return
-		end
-
-		if VirtualInputManager then
-			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-			task.wait(0.05)
-			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-		end
-	end
-
-	local connected, connection = pcall(function()
-		return player.Idled:Connect(function()
-			pcall(pulse)
-		end)
-	end)
-
-	if connected then
-		antiAfkConnection = connection
-		return
-	end
-
-	antiAfkConnection = true
-	task.spawn(function()
-		while antiAfkConnection do
-			pcall(pulse)
-			task.wait(60)
 		end
 	end)
 end
@@ -2614,7 +2569,6 @@ local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 createHubIcon()
 startHubIconMonitor()
-startMandatoryAntiAfk()
 startAutoTowerWatcher()
 startSoloSafetyLoop()
 
@@ -3083,13 +3037,6 @@ SettingsTab:CreateButton({
 		createHubIcon()
 		setHubVisible(false)
 	end,
-})
-
-SettingsTab:CreateSection("Protection")
-
-SettingsTab:CreateParagraph({
-	Title = "Anti AFK",
-	Content = "Always enabled while kryptexHUB is loaded.",
 })
 
 SettingsTab:CreateSection("Solo Safety")
